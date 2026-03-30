@@ -21,7 +21,25 @@ console = Console()
 CONFIG_DIR = Path.home() / ".config" / "fpl-copilot"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 DB_PATH = CONFIG_DIR / "fpl_copilot.db"
-SCHEMA_PATH = Path(__file__).parent / "db" / "schema.sql"
+
+DB_SCHEMA = """\
+CREATE TABLE IF NOT EXISTS session_state (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS transfer_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    gameweek INTEGER,
+    player_out TEXT,
+    player_in TEXT,
+    hit_taken INTEGER DEFAULT 0,
+    net_gain_projected FLOAT,
+    reasoning TEXT,
+    executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
 
 MODEL = "claude-sonnet-4-20250514"
 
@@ -121,8 +139,7 @@ async def init_db():
     """Initialize SQLite database from schema if it doesn't exist."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
-        schema = SCHEMA_PATH.read_text()
-        await db.executescript(schema)
+        await db.executescript(DB_SCHEMA)
         await db.commit()
 
 
@@ -209,7 +226,7 @@ async def handle_special_command(command: str) -> bool:
                 role = msg["role"]
                 if role == "user":
                     content = msg["content"] if isinstance(msg["content"], str) else "[tool result]"
-                    console.print(f"  [bold]You:[/bold] {content}")
+                    console.print(f"  [bold green]>[/bold green] {content}")
                 elif role == "assistant":
                     if isinstance(msg["content"], str):
                         console.print(f"  [bold green]Claude:[/bold green] {msg['content'][:100]}...")
@@ -278,7 +295,8 @@ async def chat_turn(user_input: str):
                     console.print(Markdown(block.text))
 
             if debug_mode:
-                console.print(f"[dim]  Tool: {tool_name}({json.dumps(tool_args)})[/dim]")
+                args_str = ", ".join(f"{k}={v!r}" for k, v in tool_args.items()) if tool_args else ""
+                console.print(f"[dim]  -> {tool_name}({args_str})[/dim]")
 
             # Human gate for confirm_transfers
             if tool_name == "confirm_transfers":
@@ -302,7 +320,16 @@ async def chat_turn(user_input: str):
                     result = await execute_tool(tool_name, tool_args)
 
             if debug_mode:
-                console.print(f"[dim]  Result: {result[:200]}[/dim]")
+                try:
+                    parsed = json.loads(result)
+                    pretty = json.dumps(parsed, indent=2, default=str)
+                    # Truncate long debug output
+                    lines = pretty.split("\n")
+                    if len(lines) > 15:
+                        pretty = "\n".join(lines[:15]) + f"\n  ... ({len(lines) - 15} more lines)"
+                    console.print(f"[dim]  <- {pretty}[/dim]")
+                except json.JSONDecodeError:
+                    console.print(f"[dim]  <- {result[:200]}[/dim]")
 
             tool_results.append({
                 "type": "tool_result",
@@ -342,7 +369,7 @@ async def main():
     # Main chat loop
     while True:
         try:
-            user_input = Prompt.ask("[bold]You[/bold]")
+            user_input = console.input("[bold green]>[/bold green] ")
         except (KeyboardInterrupt, EOFError):
             console.print("\n[dim]Goodbye![/dim]")
             break
@@ -367,10 +394,27 @@ async def main():
                 console.print(f"[dim]{traceback.format_exc()}[/dim]")
 
 
+VERSION = "0.1.3"
+
+
 def main_sync():
-    """Sync entry point — routes to init or chat based on args."""
-    if len(sys.argv) > 1 and sys.argv[1] == "init":
-        run_init()
+    """Sync entry point — routes subcommands."""
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "init":
+            run_init()
+        elif cmd in ("--version", "-v", "version"):
+            console.print(f"fpl-copilot {VERSION}")
+        elif cmd in ("--help", "-h", "help"):
+            console.print(f"[bold]fpl-copilot[/bold] {VERSION}\n")
+            console.print("Usage:")
+            console.print("  fpl-copilot           Start chatting")
+            console.print("  fpl-copilot init      Set up your credentials")
+            console.print("  fpl-copilot version   Show version")
+            console.print("  fpl-copilot help      Show this help")
+        else:
+            console.print(f"[red]Unknown command: {cmd}[/red]")
+            console.print("Run [bold]fpl-copilot help[/bold] for usage.")
     else:
         asyncio.run(main())
 
