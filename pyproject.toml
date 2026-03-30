@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fpl-copilot"
+version = "0.1.0"
+description = "A conversational CLI copilot for Fantasy Premier League"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic",
+    "playwright",
+    "firecrawl-py",
+    "pydantic",
+    "aiohttp",
+    "aiosqlite",
+    "rich",
+    "python-dotenv",
+]
+
+[project.scripts]
+fpl-copilot = "cli:main_sync"

@@ -1,0 +1,8 @@
+anthropic
+playwright
+firecrawl-py
+pydantic
+aiohttp
+aiosqlite
+rich
+python-dotenv
