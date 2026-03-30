@@ -15,7 +15,7 @@ Think of it like Claude Code, but for FPL.
 ## Installation
 
 ```bash
-git clone <repo-url>
+git clone git@github.com:amit3992/fpl-copilot.git
 cd fpl-copilot
 python -m venv .venv
 source .venv/bin/activate
