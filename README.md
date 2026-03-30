@@ -4,67 +4,82 @@ A conversational CLI copilot for Fantasy Premier League. Chat with Claude to ana
 
 Think of it like Claude Code, but for FPL.
 
-## Prerequisites
-
-- Python 3.11+
-- An [Anthropic API key](https://console.anthropic.com/)
-- Your FPL team ID (find it in the URL when viewing your team on the FPL website)
-- (Optional) FPL login credentials for executing transfers
-- (Optional) [Firecrawl API key](https://firecrawl.dev/) for enhanced player news
-
 ## Installation
 
 ```bash
-git clone git@github.com:amit3992/fpl-copilot.git
-cd fpl-copilot
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+pip install fpl-copilot
 playwright install chromium
 ```
 
-Copy `.env.example` to `.env` and fill in your keys:
+## Setup
 
 ```bash
-cp .env.example .env
+fpl-copilot init
 ```
+
+This will prompt you for:
+- **Anthropic API key** ([get one here](https://console.anthropic.com/))
+- **FPL team ID** (find it in the URL when viewing your team: `fantasy.premierleague.com/entry/XXXXXXX/...`)
+- **FPL email & password** (optional — only needed to execute transfers)
+- **Firecrawl API key** (optional — for enhanced player news from BBC/Sky Sports)
+
+Config is saved to `~/.config/fpl-copilot/config.json`.
 
 ## Usage
 
 ```bash
-python cli.py
+fpl-copilot
+```
+
+```
+> who is my captain?
+  ⠋ Checking get_my_team...
+
+Your captain is Erling Haaland (Manchester City, £14.4m).
+
+> any injury concerns?
+  ⠋ Checking get_injury_news...
+
+2 flagged players in your squad:
+  Salah — Doubtful (hamstring, 50% chance)
+  Watkins — Injured (knee, expected back GW32)
+
+> who should I replace Watkins with?
+  ⠋ Checking get_transfer_options...
+
+Top 5 replacements for Watkins (FWD, £7.8m budget):
+  1. Isak (NEW) — £7.5m, form 8.2, score 6.41
+  ...
 ```
 
 ## What you can ask
 
-- **"Show me my team"** — view your full squad with form, price, and status
+- **"Show me my team"** — full squad with form, price, and status
 - **"How's my budget looking?"** — bank balance, free transfers, available chips
-- **"Any injury news?"** — check which of your players are flagged
+- **"Any injury news?"** — flagged players in your squad
 - **"Tell me about Palmer"** — detailed stats, recent form, upcoming fixtures
 - **"Who should I replace Salah with?"** — top 5 ranked alternatives within budget
-- **"Is it worth taking a hit to bring in Haaland for Watkins?"** — projected net gain analysis
+- **"Is it worth taking a hit for Haaland?"** — projected net gain analysis
 - **"What are Arsenal's next 5 fixtures?"** — fixture difficulty ratings
 - **"Transfer out Salah, bring in Palmer"** — stages the transfer for your approval
-- **"Show my transfer history"** — past transfers from previous sessions
 
-## Commands
+## CLI Reference
+
+```
+fpl-copilot           Open the copilot
+fpl-copilot init      Set up your credentials
+fpl-copilot version   Show version
+fpl-copilot help      Show help
+```
+
+In-session commands:
 
 | Command    | Description                        |
 |------------|------------------------------------|
-| `/quit`    | Exit the CLI                       |
+| `/quit`    | Exit                               |
 | `/clear`   | Clear conversation history         |
 | `/history` | Show conversation history          |
 | `/debug`   | Toggle verbose tool call logging   |
-
-## Environment Variables
-
-| Variable           | Required | Description                                    |
-|--------------------|----------|------------------------------------------------|
-| `ANTHROPIC_API_KEY`| Yes      | Your Anthropic API key                         |
-| `FPL_TEAM_ID`     | Yes      | Your FPL team ID                               |
-| `FPL_EMAIL`       | No       | FPL login email (needed for transfers)         |
-| `FPL_PASSWORD`    | No       | FPL login password (needed for transfers)      |
-| `FIRECRAWL_API_KEY`| No      | Firecrawl API key for enhanced news scraping   |
 
 ## Architecture
 
@@ -77,7 +92,6 @@ tools/news.py       → Injury news and player availability
 tools/analysis.py   → Transfer recommendations and fixture analysis
 tools/browser.py    → Playwright-based login and transfer execution
 tools/registry.py   → Anthropic tool definitions and handler mapping
-db/schema.sql       → SQLite schema for session state and transfer history
 ```
 
 Claude handles all orchestration — no LangGraph or agent frameworks. The CLI sends your message plus the tool definitions to Claude, which decides what to call based on your question. Transfers require explicit `y` confirmation before executing.
