@@ -8,8 +8,8 @@ import json
 import os
 from pathlib import Path
 
-DB_DIR = Path(__file__).parent.parent / "db"
-SESSION_FILE = DB_DIR / "session.json"
+CONFIG_DIR = Path.home() / ".config" / "fpl-copilot"
+SESSION_FILE = CONFIG_DIR / "session.json"
 
 # Module-level browser/page reference for reuse within a session
 _browser = None
@@ -44,7 +44,7 @@ async def _save_session():
     if _page is None:
         return
     storage_state = await _page.context.storage_state()
-    DB_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(SESSION_FILE, "w") as f:
         json.dump(storage_state, f)
 

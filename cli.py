@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 import aiosqlite
-from dotenv import load_dotenv
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -19,9 +18,10 @@ from tools.registry import TOOLS, TOOL_HANDLERS
 
 console = Console()
 
-DB_DIR = Path(__file__).parent / "db"
-DB_PATH = DB_DIR / "fpl_copilot.db"
-SCHEMA_PATH = DB_DIR / "schema.sql"
+CONFIG_DIR = Path.home() / ".config" / "fpl-copilot"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+DB_PATH = CONFIG_DIR / "fpl_copilot.db"
+SCHEMA_PATH = Path(__file__).parent / "db" / "schema.sql"
 
 MODEL = "claude-sonnet-4-20250514"
 
@@ -45,9 +45,81 @@ conversation: list[dict] = []
 debug_mode = False
 
 
+def load_config() -> dict:
+    """Load config from ~/.config/fpl-copilot/config.json."""
+    if not CONFIG_FILE.exists():
+        return {}
+    with open(CONFIG_FILE) as f:
+        return json.load(f)
+
+
+def save_config(config: dict):
+    """Save config to ~/.config/fpl-copilot/config.json."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=2)
+    # Restrict permissions — this file has secrets
+    CONFIG_FILE.chmod(0o600)
+
+
+def apply_config(config: dict):
+    """Set environment variables from config so the rest of the app can use os.environ."""
+    for key in ("ANTHROPIC_API_KEY", "FPL_TEAM_ID", "FPL_EMAIL", "FPL_PASSWORD", "FIRECRAWL_API_KEY"):
+        value = config.get(key, "")
+        if value:
+            os.environ[key] = value
+
+
+def run_init():
+    """Interactive setup — prompts for credentials and saves to config."""
+    console.print()
+    console.print(Panel.fit(
+        "[bold green]FPL Copilot Setup[/bold green]\n"
+        "[dim]This will save your config to ~/.config/fpl-copilot/config.json[/dim]",
+        border_style="green",
+    ))
+    console.print()
+
+    existing = load_config()
+
+    def ask(label: str, key: str, required: bool = False, password: bool = False) -> str:
+        default = existing.get(key, "")
+        suffix = "" if not default else f" [dim](press Enter to keep current)[/dim]"
+        req = " [red](required)[/red]" if required else " [dim](optional)[/dim]"
+        console.print(f"  {label}{req}{suffix}")
+        value = Prompt.ask("  ", default=default, password=password)
+        return value.strip()
+
+    config = {}
+
+    config["ANTHROPIC_API_KEY"] = ask("Anthropic API Key", "ANTHROPIC_API_KEY", required=True, password=True)
+    console.print()
+
+    config["FPL_TEAM_ID"] = ask(
+        "FPL Team ID (from fantasy.premierleague.com/entry/XXXXXXX/...)",
+        "FPL_TEAM_ID",
+        required=True,
+    )
+    console.print()
+
+    console.print("  [dim]FPL login is only needed if you want to execute transfers.[/dim]")
+    config["FPL_EMAIL"] = ask("FPL Email", "FPL_EMAIL")
+    config["FPL_PASSWORD"] = ask("FPL Password", "FPL_PASSWORD", password=True)
+    console.print()
+
+    config["FIRECRAWL_API_KEY"] = ask("Firecrawl API Key (for enhanced news)", "FIRECRAWL_API_KEY", password=True)
+
+    save_config(config)
+
+    console.print()
+    console.print(f"  [green]Config saved to {CONFIG_FILE}[/green]")
+    console.print("  [dim]Run [bold]fpl-copilot[/bold] to start chatting.[/dim]")
+    console.print()
+
+
 async def init_db():
     """Initialize SQLite database from schema if it doesn't exist."""
-    DB_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         schema = SCHEMA_PATH.read_text()
         await db.executescript(schema)
@@ -94,7 +166,7 @@ async def print_welcome():
         console.print(f"  Overall rank: [yellow]{entry.get('summary_overall_rank', 'N/A'):,}[/yellow]")
         console.print(f"  Total points: [yellow]{entry.get('summary_overall_points', 'N/A')}[/yellow]")
     except Exception:
-        console.print("  [dim]Could not load team info. Check FPL_TEAM_ID in .env[/dim]")
+        console.print("  [dim]Could not load team info. Check your config with: fpl-copilot init[/dim]")
 
     console.print()
     console.print("[dim]Commands: /quit  /clear  /history  /debug[/dim]")
@@ -244,15 +316,21 @@ async def chat_turn(user_input: str):
 
 async def main():
     """Main entry point — run the chat loop."""
-    load_dotenv()
+    # Load config from ~/.config/fpl-copilot/config.json
+    config = load_config()
+    if not config:
+        console.print("[yellow]No config found. Run [bold]fpl-copilot init[/bold] to set up.[/yellow]")
+        sys.exit(1)
 
-    # Validate required env vars
+    apply_config(config)
+
+    # Validate required keys
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        console.print("[red]Error: ANTHROPIC_API_KEY not set. Check your .env file.[/red]")
+        console.print("[red]Error: Anthropic API key not configured. Run [bold]fpl-copilot init[/bold].[/red]")
         sys.exit(1)
 
     if not os.environ.get("FPL_TEAM_ID"):
-        console.print("[red]Error: FPL_TEAM_ID not set. Check your .env file.[/red]")
+        console.print("[red]Error: FPL Team ID not configured. Run [bold]fpl-copilot init[/bold].[/red]")
         sys.exit(1)
 
     # Initialize database
@@ -290,8 +368,11 @@ async def main():
 
 
 def main_sync():
-    """Sync entry point for console_scripts."""
-    asyncio.run(main())
+    """Sync entry point — routes to init or chat based on args."""
+    if len(sys.argv) > 1 and sys.argv[1] == "init":
+        run_init()
+    else:
+        asyncio.run(main())
 
 
 if __name__ == "__main__":

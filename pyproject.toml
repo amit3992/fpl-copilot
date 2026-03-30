@@ -5,9 +5,24 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fpl-copilot"
 version = "0.1.0"
-description = "A conversational CLI copilot for Fantasy Premier League"
+description = "A conversational CLI copilot for Fantasy Premier League, powered by Claude"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
+authors = [
+    { name = "Amit Patel" },
+]
+keywords = ["fpl", "fantasy-premier-league", "cli", "copilot", "claude", "ai"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Games/Entertainment",
+]
 dependencies = [
     "anthropic",
     "playwright",
@@ -18,6 +33,15 @@ dependencies = [
     "rich",
     "python-dotenv",
 ]
+
+[project.urls]
+Homepage = "https://github.com/amit3992/fpl-copilot"
+Repository = "https://github.com/amit3992/fpl-copilot"
+Issues = "https://github.com/amit3992/fpl-copilot/issues"
+
+[tool.setuptools]
+py-modules = ["cli"]
+packages = ["core", "tools"]
 
 [project.scripts]
 fpl-copilot = "cli:main_sync"
