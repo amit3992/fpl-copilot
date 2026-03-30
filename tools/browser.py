@@ -11,6 +11,8 @@ from pathlib import Path
 CONFIG_DIR = Path.home() / ".config" / "fpl-copilot"
 SESSION_FILE = CONFIG_DIR / "session.json"
 
+FPL_BASE = "https://fantasy.premierleague.com"
+
 # Module-level browser/page reference for reuse within a session
 _browser = None
 _page = None
@@ -39,6 +41,17 @@ async def _get_page():
     return _page
 
 
+async def _dismiss_cookie_banner(page):
+    """Dismiss the OneTrust cookie consent banner if present."""
+    try:
+        accept_btn = page.locator("#onetrust-accept-btn-handler")
+        if await accept_btn.is_visible(timeout=3000):
+            await accept_btn.click()
+            await page.wait_for_timeout(500)
+    except Exception:
+        pass
+
+
 async def _save_session():
     """Save browser session cookies to disk."""
     if _page is None:
@@ -62,18 +75,39 @@ async def fpl_login() -> dict:
     password = os.environ.get("FPL_PASSWORD")
 
     if not email or not password:
-        return {"success": False, "error": "FPL_EMAIL and FPL_PASSWORD must be set in .env"}
+        return {"success": False, "error": "FPL_EMAIL and FPL_PASSWORD must be set. Run: fpl-copilot init"}
 
     try:
         page = await _get_page()
 
-        await page.goto("https://users.premierleague.com/accounts/login/")
-        await page.fill("input[name='login']", email)
-        await page.fill("input[name='password']", password)
-        await page.click("button[type='submit']")
+        # Navigate to transfers page which will show login if not authenticated
+        await page.goto(f"{FPL_BASE}/transfers")
+        await page.wait_for_load_state("networkidle")
 
-        # Wait for redirect back to FPL
-        await page.wait_for_url("**/fantasy.premierleague.com/**", timeout=15000)
+        await _dismiss_cookie_banner(page)
+
+        # Click the Log in button
+        login_btn = page.locator("button:has-text('Log in')").first
+        if await login_btn.is_visible(timeout=3000):
+            await login_btn.click()
+            await page.wait_for_load_state("networkidle")
+
+        # Wait for redirect to account.premierleague.com login form
+        await page.wait_for_selector("input#username", timeout=15000)
+
+        await page.fill("input#username", email)
+        await page.fill("input#password", password)
+
+        submit_btn = page.locator("button[type='submit']").first
+        await submit_btn.click()
+
+        # Wait for redirect back to FPL after successful login
+        await page.wait_for_url(f"**/{FPL_BASE.split('//')[1]}/**", timeout=20000)
+
+        # Check if we're logged in by looking for squad elements
+        body_text = await page.inner_text("body")
+        if "Register to Play" in body_text or "Log in" in body_text:
+            return {"success": False, "error": "Login failed — check your FPL email and password."}
 
         await _save_session()
         return {"success": True, "message": "Logged in successfully. Session saved."}
@@ -97,25 +131,24 @@ async def execute_transfer(player_out: str, player_in: str) -> dict:
     page = await _get_page()
 
     try:
-        # Navigate to transfers page
-        await page.goto("https://fantasy.premierleague.com/transfers")
+        await page.goto(f"{FPL_BASE}/transfers")
         await page.wait_for_load_state("networkidle")
 
-        # Search and select player to remove
-        # Click on the player in the squad list
+        await _dismiss_cookie_banner(page)
+
+        # Click on the player to transfer out
         player_out_el = page.locator(f"text={player_out}").first
         await player_out_el.click()
 
-        # Wait for the replacement panel to appear, then search
+        # Wait for the replacement panel, then search
         search_input = page.locator("input[type='search']").first
         await search_input.fill(player_in)
-        await page.wait_for_timeout(1000)  # wait for search results
+        await page.wait_for_timeout(1000)
 
         # Select the first matching player
         player_in_el = page.locator(f"text={player_in}").first
         await player_in_el.click()
 
-        # Wait for transfer to register
         await page.wait_for_timeout(500)
 
         return {
@@ -150,11 +183,9 @@ async def confirm_transfers() -> dict:
     page = await _get_page()
 
     try:
-        # Click the "Make Transfers" / confirm button
         confirm_btn = page.locator("button:has-text('Confirm')").first
         await confirm_btn.click()
 
-        # Handle any confirmation dialog
         await page.wait_for_timeout(2000)
 
         await _save_session()
