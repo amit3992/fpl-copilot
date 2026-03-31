@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fpl-copilot"
-version = "0.1.4"
+version = "0.1.5"
 description = "A conversational CLI copilot for Fantasy Premier League, powered by Claude"
 readme = "README.md"
 license = "MIT"

@@ -86,14 +86,19 @@ async def fpl_login() -> dict:
 
         await _dismiss_cookie_banner(page)
 
-        # Click the Log in button
+        # Check if already logged in (saved session still valid)
         login_btn = page.locator("button:has-text('Log in')").first
-        if await login_btn.is_visible(timeout=3000):
-            await login_btn.click()
-            await page.wait_for_load_state("networkidle")
+        if not await login_btn.is_visible(timeout=3000):
+            await _save_session()
+            return {"success": True, "message": "Already logged in (session restored)."}
+
+        await login_btn.click()
+        await page.wait_for_load_state("networkidle")
 
         # Wait for redirect to account.premierleague.com login form
-        await page.wait_for_selector("input#username", timeout=15000)
+        await page.wait_for_timeout(3000)
+        await _dismiss_cookie_banner(page)
+        await page.wait_for_selector("input#username", state="attached", timeout=15000)
 
         await page.fill("input#username", email)
         await page.fill("input#password", password)
@@ -102,12 +107,14 @@ async def fpl_login() -> dict:
         await submit_btn.click()
 
         # Wait for redirect back to FPL after successful login
-        await page.wait_for_url(f"**/{FPL_BASE.split('//')[1]}/**", timeout=20000)
+        for _ in range(15):
+            await page.wait_for_timeout(1000)
+            if "fantasy.premierleague.com" in page.url and "account." not in page.url:
+                break
+        else:
+            return {"success": False, "error": "Login timed out — did not redirect back to FPL."}
 
-        # Check if we're logged in by looking for squad elements
-        body_text = await page.inner_text("body")
-        if "Register to Play" in body_text or "Log in" in body_text:
-            return {"success": False, "error": "Login failed — check your FPL email and password."}
+        await page.wait_for_load_state("networkidle")
 
         await _save_session()
         return {"success": True, "message": "Logged in successfully. Session saved."}
