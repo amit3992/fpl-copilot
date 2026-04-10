@@ -8,7 +8,6 @@ Think of it like Claude Code, but for FPL.
 
 ```bash
 pip install fpl-copilot
-playwright install chromium
 ```
 
 ## Setup
@@ -85,13 +84,16 @@ In-session commands:
 
 ```
 cli.py              → Chat loop (Rich UI + Anthropic API)
-core/fpl.py         → Async FPL API wrapper (aiohttp)
+core/auth.py        → PingOne DaVinci OAuth flow + token management
+core/fpl.py         → Async FPL API wrapper (public + authenticated endpoints)
 core/scoring.py     → Player scoring and ranking logic
 tools/team.py       → Team, budget, and player stat tools
 tools/news.py       → Injury news and player availability
 tools/analysis.py   → Transfer recommendations and fixture analysis
-tools/browser.py    → Playwright-based login and transfer execution
+tools/browser.py    → API-based login and transfer execution
 tools/registry.py   → Anthropic tool definitions and handler mapping
 ```
 
 Claude handles all orchestration — no LangGraph or agent frameworks. The CLI sends your message plus the tool definitions to Claude, which decides what to call based on your question. Transfers require explicit `y` confirmation before executing.
+
+Authentication uses PingOne DaVinci's redirectless OAuth flow (PKCE) — pure HTTP requests, no browser automation. Tokens are cached locally and auto-refreshed.
