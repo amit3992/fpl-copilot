@@ -5,6 +5,8 @@ from difflib import SequenceMatcher
 
 import aiohttp
 
+from core.auth import get_access_token
+
 BASE_URL = "https://fantasy.premierleague.com/api"
 
 # In-memory cache for bootstrap data (fetched once per session)
@@ -16,6 +18,33 @@ async def _get(session: aiohttp.ClientSession, path: str) -> dict | list:
     async with session.get(f"{BASE_URL}{path}") as resp:
         resp.raise_for_status()
         return await resp.json()
+
+
+async def _auth_session() -> aiohttp.ClientSession:
+    """Create an aiohttp session with Bearer auth if a token is available."""
+    token = await get_access_token()
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return aiohttp.ClientSession(headers=headers)
+
+
+async def _auth_get(path: str) -> dict | list:
+    """Make an authenticated GET request to the FPL API."""
+    async with await _auth_session() as session:
+        return await _get(session, path)
+
+
+async def _auth_post(path: str, payload: dict) -> dict:
+    """Make an authenticated POST request to the FPL API."""
+    async with await _auth_session() as session:
+        async with session.post(
+            f"{BASE_URL}{path}",
+            json=payload,
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        ) as resp:
+            resp.raise_for_status()
+            return await resp.json()
 
 
 async def get_bootstrap() -> dict:
@@ -137,3 +166,80 @@ async def get_player_summary(player_id: int) -> dict:
     """
     async with aiohttp.ClientSession() as session:
         return await _get(session, f"/element-summary/{player_id}/")
+
+
+# --- Authenticated endpoints ---
+
+
+async def get_me() -> dict:
+    """Fetch the authenticated user's profile.
+
+    Returns player info including the entry (team) ID.
+    Requires authentication.
+    """
+    return await _auth_get("/me/")
+
+
+async def get_my_squad(team_id: str | None = None) -> dict:
+    """Fetch the authenticated user's current squad.
+
+    Returns picks, chips status, and transfer info.
+    Requires authentication — the team_id must match the logged-in user.
+    """
+    if team_id is None:
+        team_id = os.environ["FPL_TEAM_ID"]
+    return await _auth_get(f"/my-team/{team_id}/")
+
+
+async def make_transfer(
+    team_id: str,
+    gameweek: int,
+    transfers: list[dict],
+    confirm: bool = False,
+    wildcard: bool = False,
+    freehit: bool = False,
+) -> dict:
+    """Execute transfers via the FPL API.
+
+    Args:
+        team_id: The manager's entry/team ID.
+        gameweek: Current gameweek number.
+        transfers: List of dicts with element_in, element_out,
+                   purchase_price, selling_price.
+        confirm: If False, validates only (dry run). If True, executes.
+        wildcard: Set True to play the wildcard chip.
+        freehit: Set True to play the free hit chip.
+
+    Returns the API response dict.
+    """
+    payload = {
+        "confirmed": confirm,
+        "entry": int(team_id),
+        "event": gameweek,
+        "transfers": transfers,
+        "wildcard": wildcard,
+        "freehit": freehit,
+    }
+    return await _auth_post("/transfers/", payload)
+
+
+async def set_lineup(
+    team_id: str,
+    picks: list[dict],
+    chip: str | None = None,
+) -> dict:
+    """Set the squad lineup, captaincy, and bench order.
+
+    Args:
+        team_id: The manager's entry/team ID.
+        picks: List of 15 dicts with element, position (1-15),
+               is_captain, is_vice_captain.
+        chip: Optional chip to play — "bboost" or "3xc".
+
+    Returns the API response dict.
+    """
+    payload = {
+        "chip": chip,
+        "picks": picks,
+    }
+    return await _auth_post(f"/my-team/{team_id}/", payload)

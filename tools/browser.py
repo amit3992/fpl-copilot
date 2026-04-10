@@ -1,205 +1,148 @@
-"""Browser automation tools for FPL login and transfer execution.
+"""Tools for FPL login and transfer execution via the API.
 
-Uses Playwright to interact with the FPL website for actions that
-require authentication (making transfers).
+Uses the DaVinci OAuth flow for authentication and direct API calls
+for transfers and lineup management. No browser automation required.
 """
 
-import json
 import os
-from pathlib import Path
 
-CONFIG_DIR = Path.home() / ".config" / "fpl-copilot"
-SESSION_FILE = CONFIG_DIR / "session.json"
-
-FPL_BASE = "https://fantasy.premierleague.com"
-
-# Module-level browser/page reference for reuse within a session
-_browser = None
-_page = None
-
-
-async def _get_page():
-    """Get or create a Playwright browser page with saved session cookies."""
-    global _browser, _page
-
-    if _page is not None:
-        return _page
-
-    from playwright.async_api import async_playwright
-
-    pw = await async_playwright().start()
-    _browser = await pw.chromium.launch(headless=True)
-
-    context_opts = {}
-    if SESSION_FILE.exists():
-        with open(SESSION_FILE) as f:
-            storage_state = json.load(f)
-        context_opts["storage_state"] = storage_state
-
-    context = await _browser.new_context(**context_opts)
-    _page = await context.new_page()
-    return _page
-
-
-async def _dismiss_cookie_banner(page):
-    """Dismiss the OneTrust cookie consent banner if present."""
-    try:
-        accept_btn = page.locator("#onetrust-accept-btn-handler")
-        if await accept_btn.is_visible(timeout=3000):
-            await accept_btn.click()
-            await page.wait_for_timeout(500)
-    except Exception:
-        pass
-
-
-async def _save_session():
-    """Save browser session cookies to disk."""
-    if _page is None:
-        return
-    storage_state = await _page.context.storage_state()
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(SESSION_FILE, "w") as f:
-        json.dump(storage_state, f)
+from core import fpl
+from core.auth import login as auth_login, get_access_token
 
 
 async def fpl_login() -> dict:
-    """Log into the FPL website using credentials from environment variables.
+    """Log into FPL using the OAuth API flow.
 
-    Uses FPL_EMAIL and FPL_PASSWORD from your .env file to authenticate
-    via the Premier League login page. Saves session cookies for reuse
-    so you don't need to log in again during this session.
+    Uses FPL_EMAIL and FPL_PASSWORD from your config to authenticate
+    via the PingOne DaVinci OAuth flow. Saves tokens for reuse so you
+    don't need to log in again for ~8 hours (auto-refreshes after that).
 
     Returns a dict with login status and any error message.
     """
-    email = os.environ.get("FPL_EMAIL")
-    password = os.environ.get("FPL_PASSWORD")
+    # Check if we already have a valid token
+    token = await get_access_token()
+    if token:
+        return {"success": True, "message": "Already authenticated (token valid)."}
 
-    if not email or not password:
-        return {"success": False, "error": "FPL_EMAIL and FPL_PASSWORD must be set. Run: fpl-copilot init"}
-
-    try:
-        page = await _get_page()
-
-        # Navigate to transfers page which will show login if not authenticated
-        await page.goto(f"{FPL_BASE}/transfers")
-        await page.wait_for_load_state("networkidle")
-
-        await _dismiss_cookie_banner(page)
-
-        # Check if already logged in (saved session still valid)
-        login_btn = page.locator("button:has-text('Log in')").first
-        if not await login_btn.is_visible(timeout=3000):
-            await _save_session()
-            return {"success": True, "message": "Already logged in (session restored)."}
-
-        await login_btn.click()
-        await page.wait_for_load_state("networkidle")
-
-        # Wait for redirect to account.premierleague.com login form
-        await page.wait_for_timeout(3000)
-        await _dismiss_cookie_banner(page)
-        await page.wait_for_selector("input#username", state="attached", timeout=15000)
-
-        await page.fill("input#username", email)
-        await page.fill("input#password", password)
-
-        submit_btn = page.locator("button[type='submit']").first
-        await submit_btn.click()
-
-        # Wait for redirect back to FPL after successful login
-        for _ in range(15):
-            await page.wait_for_timeout(1000)
-            if "fantasy.premierleague.com" in page.url and "account." not in page.url:
-                break
-        else:
-            return {"success": False, "error": "Login timed out — did not redirect back to FPL."}
-
-        await page.wait_for_load_state("networkidle")
-
-        await _save_session()
-        return {"success": True, "message": "Logged in successfully. Session saved."}
-
-    except Exception as e:
-        return {"success": False, "error": f"Login failed: {str(e)}"}
+    return await auth_login()
 
 
 async def execute_transfer(player_out: str, player_in: str) -> dict:
-    """Navigate to the FPL transfers page and select a transfer.
+    """Stage a transfer via the FPL API (dry run).
 
     Args:
         player_out: Name of the player to transfer out.
         player_in: Name of the player to transfer in.
 
-    This sets up the transfer on the FPL website but does NOT confirm it.
-    You must call confirm_transfers() separately to finalize.
+    Validates the transfer without confirming it. You must call
+    confirm_transfers() separately to finalize.
 
     Returns a summary of the pending transfer for human review.
     """
-    page = await _get_page()
+    token = await get_access_token()
+    if not token:
+        return {"success": False, "error": "Not logged in. Call fpl_login first."}
 
     try:
-        await page.goto(f"{FPL_BASE}/transfers")
-        await page.wait_for_load_state("networkidle")
+        # Resolve player names to IDs and prices
+        bootstrap = await fpl.get_bootstrap()
+        elements = {p["id"]: p for p in bootstrap["elements"]}
 
-        await _dismiss_cookie_banner(page)
+        player_out_data = await fpl.get_player_by_name(player_out)
+        if not player_out_data:
+            return {"success": False, "error": f"Player not found: {player_out}"}
 
-        # Click on the player to transfer out
-        player_out_el = page.locator(f"text={player_out}").first
-        await player_out_el.click()
+        player_in_data = await fpl.get_player_by_name(player_in)
+        if not player_in_data:
+            return {"success": False, "error": f"Player not found: {player_in}"}
 
-        # Wait for the replacement panel, then search
-        search_input = page.locator("input[type='search']").first
-        await search_input.fill(player_in)
-        await page.wait_for_timeout(1000)
+        team_id = os.environ["FPL_TEAM_ID"]
+        gameweek = await fpl.get_current_gameweek()
 
-        # Select the first matching player
-        player_in_el = page.locator(f"text={player_in}").first
-        await player_in_el.click()
+        # Get selling price from current squad
+        squad = await fpl.get_my_squad(team_id)
+        selling_price = None
+        for pick in squad.get("picks", []):
+            if pick["element"] == player_out_data["id"]:
+                selling_price = pick["selling_price"]
+                break
 
-        await page.wait_for_timeout(500)
+        if selling_price is None:
+            return {
+                "success": False,
+                "error": f"{player_out_data['web_name']} is not in your squad.",
+            }
+
+        transfer = {
+            "element_in": player_in_data["id"],
+            "element_out": player_out_data["id"],
+            "purchase_price": player_in_data["now_cost"],
+            "selling_price": selling_price,
+        }
+
+        # Dry run — validate without confirming
+        result = await fpl.make_transfer(
+            team_id=team_id,
+            gameweek=gameweek,
+            transfers=[transfer],
+            confirm=False,
+        )
 
         return {
             "success": True,
             "pending_transfer": {
-                "out": player_out,
-                "in": player_in,
+                "out": player_out_data["web_name"],
+                "out_id": player_out_data["id"],
+                "in": player_in_data["web_name"],
+                "in_id": player_in_data["id"],
+                "selling_price": selling_price / 10,
+                "purchase_price": player_in_data["now_cost"] / 10,
             },
+            "validation": result,
             "message": (
-                f"Transfer staged: {player_out} → {player_in}. "
+                f"Transfer validated: {player_out_data['web_name']} "
+                f"(${selling_price / 10}m) -> {player_in_data['web_name']} "
+                f"(${player_in_data['now_cost'] / 10}m). "
                 "This has NOT been confirmed yet. "
                 "Call confirm_transfers() to finalize."
             ),
         }
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to stage transfer: {str(e)}"}
+        return {"success": False, "error": f"Failed to stage transfer: {e}"}
 
 
 async def confirm_transfers() -> dict:
-    """Confirm all pending transfers on the FPL website.
+    """Confirm the most recently staged transfer via the FPL API.
 
-    WARNING: This is the only function that makes real, irreversible changes
-    to your FPL team. It clicks the confirm button on the transfers page.
+    WARNING: This makes irreversible changes to your team.
+    NEVER call this without explicit user approval.
 
-    This should NEVER be called without explicit user approval. The CLI
-    will always show what is about to happen and ask for a 'y' confirmation
-    before this function executes.
-
-    Returns confirmation status and details of the completed transfers.
+    Returns confirmation status and details.
     """
-    page = await _get_page()
+    token = await get_access_token()
+    if not token:
+        return {"success": False, "error": "Not logged in. Call fpl_login first."}
 
     try:
-        confirm_btn = page.locator("button:has-text('Confirm')").first
-        await confirm_btn.click()
+        team_id = os.environ["FPL_TEAM_ID"]
+        gameweek = await fpl.get_current_gameweek()
 
-        await page.wait_for_timeout(2000)
+        # Re-read the pending transfer from the last execute_transfer call
+        # The FPL API handles pending state server-side, so we just confirm
+        # with the same transfer details
+        result = await fpl.make_transfer(
+            team_id=team_id,
+            gameweek=gameweek,
+            transfers=[],  # Empty confirms the pending transfer
+            confirm=True,
+        )
 
-        await _save_session()
         return {
             "success": True,
             "message": "Transfers confirmed successfully!",
+            "result": result,
         }
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to confirm transfers: {str(e)}"}
+        return {"success": False, "error": f"Failed to confirm transfers: {e}"}

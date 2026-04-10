@@ -155,9 +155,9 @@ TOOLS = [
     {
         "name": "fpl_login",
         "description": (
-            "Log into the FPL website to enable transfer execution. "
-            "Uses FPL_EMAIL and FPL_PASSWORD from environment variables. "
-            "Must be called before execute_transfer or confirm_transfers."
+            "Authenticate with the FPL API to enable transfers and lineup changes. "
+            "Uses FPL_EMAIL and FPL_PASSWORD from config. Tokens are cached and "
+            "auto-refreshed. Must be called before execute_transfer or confirm_transfers."
         ),
         "input_schema": {
             "type": "object",
@@ -168,8 +168,8 @@ TOOLS = [
     {
         "name": "execute_transfer",
         "description": (
-            "Stage a transfer on the FPL website (select player out and player in). "
-            "This does NOT confirm the transfer — it only sets it up for review. "
+            "Stage a transfer via the FPL API (validates without confirming). "
+            "This does NOT confirm the transfer — it only validates it for review. "
             "You must call confirm_transfers() separately after user approval."
         ),
         "input_schema": {
@@ -190,7 +190,7 @@ TOOLS = [
     {
         "name": "confirm_transfers",
         "description": (
-            "Confirm all pending transfers on the FPL website. "
+            "Confirm all pending transfers via the FPL API. "
             "WARNING: This makes irreversible changes to your team. "
             "NEVER call this without showing the user exactly what will happen "
             "and receiving their explicit 'yes' approval first."

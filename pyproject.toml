@@ -25,7 +25,6 @@ classifiers = [
 ]
 dependencies = [
     "anthropic",
-    "playwright",
     "firecrawl-py",
     "pydantic",
     "aiohttp",

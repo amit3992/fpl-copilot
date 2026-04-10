@@ -1,5 +1,4 @@
 anthropic
-playwright
 firecrawl-py
 pydantic
 aiohttp
